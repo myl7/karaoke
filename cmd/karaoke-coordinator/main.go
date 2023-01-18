@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"log"
 	"os"
 	"time"
 
@@ -13,12 +14,17 @@ func main() {
 	opts := parseOpts()
 	ctx := context.Background()
 
-	c := coordinator.NewCoordinator(coordinator.CoordinatorConfig{
+	co := coordinator.NewCoordinator(coordinator.CoordinatorConfig{
 		ServerN: opts["sn"].(int),
 		RAddr:   opts["raddr"].(string),
 		MURI:    opts["muri"].(string),
 	})
-	c.Bootstrap(ctx)
+	err := co.Bootstrap(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer co.Close(ctx)
+	log.Println("bootstrap OK")
 
 	// TODO: To impl
 	for {

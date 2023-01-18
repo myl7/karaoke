@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"log"
 	"os"
 	"regexp"
 	"time"
@@ -21,7 +22,12 @@ func main() {
 		RAddr: opts["raddr"].(string),
 		MURI:  opts["muri"].(string),
 	})
-	s.Bootstrap(ctx)
+	err := s.Bootstrap(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close(ctx)
+	log.Println("bootstrap OK")
 
 	// TODO: To impl
 	for {

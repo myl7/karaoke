@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-redis/redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -28,7 +29,11 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	mC, err := mongo.NewClient(options.Client().ApplyURI(s.c.MURI))
+	mC, err := mongo.Connect(ctx, options.Client().ApplyURI(s.c.MURI))
+	if err != nil {
+		return err
+	}
+	err = mC.Ping(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -45,10 +50,24 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 
 	coll := s.mDB.Collection("bootstrap_pconfig")
-	coll.InsertOne(ctx, map[string]any{
+	_, err = coll.DeleteOne(ctx, bson.D{
+		{Key: "addr", Value: s.addr},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = coll.InsertOne(ctx, map[string]any{
 		"addr": s.addr,
 		"pk":   s.c.PK,
 	})
+	if err != nil {
+		return err
+	}
+
+	err = s.rC.Publish(ctx, "karaoke/bootstrap_pconfig_n_ok", s.addr).Err()
+	if err != nil {
+		return err
+	}
 
 	sub := s.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_ok")
 	ch := sub.Channel()
@@ -60,7 +79,10 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	sub.Close()
+	err = sub.Close()
+	if err != nil {
+		panic(err)
+	}
 
 	cur, err := coll.Find(ctx, bson.D{})
 	if err != nil {
@@ -73,6 +95,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	s.pCs = make(map[string]pConfig, len(cs)-1)
 	for _, c := range cs {
 		addr := c["addr"].(string)
 		id := c["id"].(string)
@@ -81,7 +104,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		} else {
 			s.pCs[id] = pConfig{
 				addr: addr,
-				pk:   c["pk"].(*[32]byte),
+				pk:   (*[32]byte)(c["pk"].(primitive.Binary).Data),
 			}
 		}
 	}
@@ -89,6 +112,20 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 }
 
 var ErrInvalidBootstrapPConfigOKSignal = errors.New("invalid bootstrap_pconfig_ok signal: not 1")
+
+func (s *Server) Close(ctx context.Context) error {
+	err := s.rC.Close()
+	if err != nil {
+		return err
+	}
+
+	err = s.mDB.Client().Disconnect(ctx)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // From Cloudflare API
 func publicIP() (string, error) {

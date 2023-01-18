@@ -19,35 +19,41 @@ func (co *Coordinator) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	mC, err := mongo.NewClient(options.Client().ApplyURI(co.c.MURI))
+	mC, err := mongo.Connect(ctx, options.Client().ApplyURI(co.c.MURI))
+	if err != nil {
+		return err
+	}
+	err = mC.Ping(ctx, nil)
 	if err != nil {
 		return err
 	}
 	co.mDB = mC.Database("karaoke")
 
-	coll := co.mDB.Collection("bootstrap_pconfig")
-	cStream, err := coll.Watch(ctx, mongo.Pipeline{bson.D{
-		{Key: "$match", Value: bson.D{
-			{Key: "operationType", Value: "insert"},
-		}},
-	}})
+	sub := co.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_n_ok")
+	ch := sub.Channel()
+	m := make(map[string]bool, co.c.ServerN)
+	err = func() error {
+		for {
+			select {
+			case addr := <-ch:
+				m[addr.Payload] = true
+				if len(m) >= co.c.ServerN {
+					return nil
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}()
 	if err != nil {
 		return err
 	}
-
-	n := co.c.ServerN
-	for {
-		if !cStream.Next(ctx) {
-			return cStream.Err()
-		}
-
-		n -= 1
-		if n == 0 {
-			break
-		}
+	err = sub.Close()
+	if err != nil {
+		panic(err)
 	}
-	cStream.Close(ctx)
 
+	coll := co.mDB.Collection("bootstrap_pconfig")
 	cur, err := coll.Find(ctx, bson.D{})
 	if err != nil {
 		return err
@@ -71,6 +77,20 @@ func (co *Coordinator) Bootstrap(ctx context.Context) error {
 	}
 
 	err = co.rC.Publish(ctx, "karaoke/bootstrap_pconfig_ok", "1").Err()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (co *Coordinator) Close(ctx context.Context) error {
+	err := co.rC.Close()
+	if err != nil {
+		return err
+	}
+
+	err = co.mDB.Client().Disconnect(ctx)
 	if err != nil {
 		return err
 	}
