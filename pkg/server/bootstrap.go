@@ -59,7 +59,6 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	sub.Close()
 
-	coll = s.mDB.Collection("bootstrap-pconfig")
 	cur, err := coll.Find(ctx, bson.D{})
 	if err != nil {
 		return err
