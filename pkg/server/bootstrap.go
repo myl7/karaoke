@@ -44,13 +44,13 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		s.addr = s.c.Addr
 	}
 
-	coll := s.mDB.Collection("bootstrap-pconfig")
+	coll := s.mDB.Collection("bootstrap_pconfig")
 	coll.InsertOne(ctx, map[string]any{
 		"addr": s.addr,
 		"pk":   s.c.PK,
 	})
 
-	sub := s.rC.Subscribe(ctx, "karaoke/bootstrap-pconfig-ok")
+	sub := s.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_ok")
 	ch := sub.Channel()
 	select {
 	case ok := <-ch:
@@ -88,7 +88,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-var ErrInvalidBootstrapPConfigOKSignal = errors.New("invalid bootstrap-pconfig-ok signal: not 1")
+var ErrInvalidBootstrapPConfigOKSignal = errors.New("invalid bootstrap_pconfig_ok signal: not 1")
 
 // From Cloudflare API
 func publicIP() (string, error) {

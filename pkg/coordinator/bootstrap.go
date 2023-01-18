@@ -25,7 +25,7 @@ func (co *Coordinator) Bootstrap(ctx context.Context) error {
 	}
 	co.mDB = mC.Database("karaoke")
 
-	coll := co.mDB.Collection("bootstrap-pconfig")
+	coll := co.mDB.Collection("bootstrap_pconfig")
 	cStream, err := coll.Watch(ctx, mongo.Pipeline{bson.D{
 		{Key: "$match", Value: bson.D{
 			{Key: "operationType", Value: "insert"},
@@ -70,7 +70,7 @@ func (co *Coordinator) Bootstrap(ctx context.Context) error {
 		}
 	}
 
-	err = co.rC.Publish(ctx, "karaoke/bootstrap-pconfig-ok", "1").Err()
+	err = co.rC.Publish(ctx, "karaoke/bootstrap_pconfig_ok", "1").Err()
 	if err != nil {
 		return err
 	}
