@@ -11,11 +11,10 @@ import (
 type Server struct {
 	c ServerConfig
 
-	// By detection
-	addr string
 	// Set in bootstrap
-	id  string
-	pCs map[string]pConfig
+	addr string
+	id   string
+	pCs  map[string]pConfig
 
 	rC  *redis.Client
 	mDB *mongo.Database
@@ -23,8 +22,12 @@ type Server struct {
 
 type ServerConfig struct {
 	Layer int
-	// Server must have a public IP, so only port is needed
-	Port int
+	// Endpoint accessible by other servers.
+	// If empty, use the port of [LAddr] and the public IP by detection.
+	// At that time [LAddr] must be in ":%d" format.
+	Addr string
+	// For gRPC Listening
+	LAddr string
 	// Can leave empty to atomically gen
 	// TODO: PK/sk rotation
 	PK, SK *[32]byte

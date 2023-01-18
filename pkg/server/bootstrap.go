@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -35,11 +34,15 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	s.mDB = mC.Database("karaoke")
 
-	ip, err := publicIP()
-	if err != nil {
-		return err
+	if s.c.Addr == "" {
+		ip, err := publicIP()
+		if err != nil {
+			return err
+		}
+		s.addr = ip + s.c.LAddr
+	} else {
+		s.addr = s.c.Addr
 	}
-	s.addr = fmt.Sprintf("%s:%d", ip, s.c.Port)
 
 	coll := s.mDB.Collection("bootstrap-pconfig")
 	coll.InsertOne(ctx, map[string]any{
