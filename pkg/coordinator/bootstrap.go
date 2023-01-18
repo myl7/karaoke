@@ -31,22 +31,18 @@ func (co *Coordinator) Bootstrap(ctx context.Context) error {
 
 	sub := co.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_n_ok")
 	ch := sub.Channel()
-	m := make(map[string]bool, co.c.ServerN)
-	err = func() error {
-		for {
-			select {
-			case addr := <-ch:
-				m[addr.Payload] = true
-				if len(m) >= co.c.ServerN {
-					return nil
-				}
-			case <-ctx.Done():
-				return ctx.Err()
+	m := make(map[string]bool)
+L:
+	for {
+		select {
+		case addr := <-ch:
+			m[addr.Payload] = true
+			if len(m) >= co.c.ServerN {
+				break L
 			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-	}()
-	if err != nil {
-		return err
 	}
 	err = sub.Close()
 	if err != nil {

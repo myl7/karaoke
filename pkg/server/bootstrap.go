@@ -4,20 +4,25 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-redis/redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 // Public config
 type pConfig struct {
-	addr string
-	pk   *[32]byte
+	addr  string
+	pk    *[32]byte
+	layer int
 }
 
 func (s *Server) Bootstrap(ctx context.Context) error {
@@ -39,6 +44,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	s.mDB = mC.Database("karaoke")
 
+	s.deadDrop = make(map[string][]byte)
+
 	if s.c.Addr == "" {
 		ip, err := publicIP()
 		if err != nil {
@@ -57,8 +64,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	_, err = coll.InsertOne(ctx, map[string]any{
-		"addr": s.addr,
-		"pk":   s.c.PK,
+		"addr":  s.addr,
+		"pk":    s.c.PK,
+		"layer": s.c.Layer,
 	})
 	if err != nil {
 		return err
@@ -74,7 +82,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	select {
 	case ok := <-ch:
 		if ok.Payload != "1" {
-			return ErrInvalidBootstrapPConfigOKSignal
+			panic(ErrInvalidBootstrapPConfigOKSignal)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
@@ -95,19 +103,71 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	s.pCs = make(map[string]pConfig, len(cs)-1)
+	s.pCs = make(map[string]pConfig, len(cs))
+	s.layerIdx = make(map[int][]string)
 	for _, c := range cs {
 		addr := c["addr"].(string)
 		id := c["id"].(string)
+		layer := c["layer"].(int)
 		if addr == s.addr {
 			s.id = id
-		} else {
-			s.pCs[id] = pConfig{
-				addr: addr,
-				pk:   (*[32]byte)(c["pk"].(primitive.Binary).Data),
-			}
+		}
+		s.pCs[id] = pConfig{
+			addr:  addr,
+			pk:    (*[32]byte)(c["pk"].(primitive.Binary).Data),
+			layer: layer,
+		}
+		s.layerIdx[layer] = append(s.layerIdx[layer], id)
+	}
+
+	zLCs := make(map[string]RPCClient)
+	pLCs := make(map[string]RPCClient)
+	var lock sync.Mutex
+	g, _ := errgroup.WithContext(ctx)
+	if s.c.Layer > 0 {
+		s.poolMask = make(map[string]bool, len(s.layerIdx[s.c.Layer-1]))
+		s.poolFullCh = make(chan bool)
+
+		for _, id := range s.layerIdx[0] {
+			i := id
+			g.Go(func() error {
+				conn, err := grpc.Dial(s.pCs[i].addr)
+				if err != nil {
+					return err
+				}
+				client := NewRPCClient(conn)
+
+				lock.Lock()
+				defer lock.Unlock()
+				zLCs[i] = client
+				return nil
+			})
 		}
 	}
+	if len(s.layerIdx[s.c.Layer+1]) > 0 {
+		for _, id := range s.layerIdx[s.c.Layer+1] {
+			i := id
+			g.Go(func() error {
+				conn, err := grpc.Dial(s.pCs[i].addr)
+				if err != nil {
+					return err
+				}
+				client := NewRPCClient(conn)
+
+				lock.Lock()
+				defer lock.Unlock()
+				pLCs[i] = client
+				return nil
+			})
+		}
+	}
+	err = g.Wait()
+	if err != nil {
+		return err
+	}
+	s.zeroLayerClients = zLCs
+	s.postLayerClients = pLCs
+
 	return nil
 }
 
@@ -151,3 +211,13 @@ func publicIP() (string, error) {
 }
 
 var ErrPublicIPNotFound = errors.New("public IP not found in body returned by Cloudflare")
+
+func (s *Server) Listen(ctx context.Context) error {
+	l, err := net.Listen("tcp", s.c.LAddr)
+	if err != nil {
+		return err
+	}
+	gs := grpc.NewServer()
+	RegisterRPCServer(gs, s)
+	return gs.Serve(l)
+}

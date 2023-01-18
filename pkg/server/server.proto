@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package server;
+
+option go_package = "github.com/myl7/karaoke/pkg/server";
+
+// Pre-encoding format of msgs transmitted between servers
+message Onion {
+  bytes body = 1;
+  string nextHop = 2;
+  string deadDrop = 3;
+}
+
+service RPC {
+  rpc FwdOnions(stream OnionMsg) returns (FwdOnionsRes);
+}
+
+message OnionMsg {
+  oneof msg {
+    bytes body = 1;
+    OnionMsgMeta meta = 2;
+  }
+}
+
+message OnionMsgMeta {
+  // Leave empty to indicate the onion is from a client
+  string id = 1;
+}
+
+message FwdOnionsRes {}
