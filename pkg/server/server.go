@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -104,6 +105,8 @@ L:
 			if round <= s.round {
 				log.Println("invalid round num")
 				continue L
+			} else {
+				s.round = round
 			}
 
 			err = s.runRound(ctx)
@@ -137,6 +140,7 @@ func (s *Server) runRound(ctx context.Context) error {
 	}
 
 	log.Println("get to-process onions")
+	// Do onion processing here other than in handler for easier time monitoring
 
 	var plainBs [][]byte
 	for _, b := range cipherBs {
@@ -158,20 +162,28 @@ func (s *Server) runRound(ctx context.Context) error {
 
 	var os []*Onion
 	for _, b := range plainBs {
-		var o *Onion
+		o := new(Onion)
 		err := proto.Unmarshal(b, o)
 		if err != nil {
 			continue
 		}
 
+		ok := true
 		if o.NextHop != "" && o.DeadDrop != "" {
-			continue
+			ok = false
 		}
 		if o.NextHop != "" {
-			_, ok := s.pCs[o.NextHop]
+			pC, ok := s.pCs[o.NextHop]
 			if !ok {
-				continue
+				ok = false
 			}
+			if pC.Layer != s.c.Layer+1 {
+				ok = false
+			}
+		}
+		if !ok {
+			log.Println("invalid received onion")
+			continue
 		}
 
 		os = append(os, o)
@@ -227,7 +239,8 @@ func (s *Server) runRound(ctx context.Context) error {
 					return err
 				}
 			}
-			return nil
+			_, err = cc.CloseAndRecv()
+			return err
 		})
 	}
 	err := g.Wait()
@@ -239,7 +252,15 @@ func (s *Server) runRound(ctx context.Context) error {
 	s.poolMask = make(map[string]bool)
 	s.poolLock.Unlock()
 
-	err = s.rC.Publish(ctx, "karaoke/round_ok", s.round).Err()
+	roundEndMsg := map[string]any{
+		"round": s.round,
+		"id":    s.id,
+	}
+	rEMB, err := json.Marshal(roundEndMsg)
+	if err != nil {
+		panic(err)
+	}
+	err = s.rC.Publish(ctx, "karaoke/round_ok", rEMB).Err()
 	if err != nil {
 		return err
 	}
@@ -256,37 +277,44 @@ func (s *Server) FwdOnions(ss RPC_FwdOnionsServer) error {
 	}
 	meta := metaMsg.Msg.(*OnionMsg_Meta).Meta
 
-	var bs [][]byte
-	for {
-		msg, err := ss.Recv()
-		if err != nil {
-			if err == io.EOF {
+	ok, err := func() (bool, error) {
+		s.poolLock.Lock()
+		defer s.poolLock.Unlock()
+
+		if s.poolMask[meta.Id] {
+			return false, nil
+		}
+		s.poolMask[meta.Id] = true
+
+		var bs [][]byte
+		for {
+			msg, err := ss.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				} else {
+					return false, err
+				}
+			}
+			bs = append(bs, msg.Msg.(*OnionMsg_Body).Body)
+		}
+
+		ok := true
+		for _, id := range s.layerIdx[s.c.Layer-1] {
+			if !s.poolMask[id] {
+				ok = false
 				break
-			} else {
-				return err
 			}
 		}
-		bs = append(bs, msg.Msg.(*OnionMsg_Body).Body)
-	}
 
-	s.poolLock.Lock()
-	if s.poolMask[meta.Id] {
-		return nil
-	}
-	s.poolMask[meta.Id] = true
-
-	ok := true
-	for _, id := range s.layerIdx[s.c.Layer-1] {
-		if !s.poolMask[id] {
-			ok = false
-			break
-		}
-	}
-
-	s.pool = append(s.pool, bs...)
-	s.poolLock.Unlock()
+		s.pool = append(s.pool, bs...)
+		return ok, nil
+	}()
 	if ok {
 		s.poolFullCh <- true
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return ss.SendAndClose(&FwdOnionsRes{})
 }

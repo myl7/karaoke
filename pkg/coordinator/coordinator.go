@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -59,18 +60,29 @@ func (co *Coordinator) Run(ctx context.Context) error {
 
 		sub := co.rC.Subscribe(ctx, "karaoke/round_ok")
 		ch := sub.Channel()
-		select {
-		case roundMsg := <-ch:
-			round, err := strconv.Atoi(roundMsg.Payload)
-			if err != nil {
-				panic(err)
-			}
+		m := make(map[string]bool, co.c.ServerN)
+	L:
+		for {
+			select {
+			case roundEndMsgB := <-ch:
+				var rEM map[string]any
+				err = json.Unmarshal([]byte(roundEndMsgB.Payload), &rEM)
+				if err != nil {
+					panic(err)
+				}
+				round := int(rEM["round"].(float64))
+				id := rEM["id"].(string)
 
-			if round != co.round {
-				panic(ErrRoundNotMatch)
+				if round != co.round {
+					panic(ErrRoundNotMatch)
+				}
+				m[id] = true
+				if len(m) >= co.c.ServerN {
+					break L
+				}
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 		err = sub.Close()
 		if err != nil {

@@ -229,6 +229,7 @@ func publicIP() (string, error) {
 
 var ErrPublicIPNotFound = errors.New("public IP not found in body returned by Cloudflare")
 
+// TODO: Ctx stop
 func (s *Server) Listen(ctx context.Context) error {
 	l, err := net.Listen("tcp", s.c.LAddr)
 	if err != nil {
