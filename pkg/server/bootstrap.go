@@ -16,9 +16,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Public config
+// PConfig is server publicly available config
 type PConfig struct {
 	Addr  string
 	PK    *[32]byte
@@ -44,6 +45,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	s.mDB = mC.Database("karaoke")
 
+	// TODO: Dead drop external persistence
 	s.deadDrop = make(map[string][]byte)
 
 	if s.c.Addr == "" {
@@ -57,6 +59,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 
 	coll := s.mDB.Collection("bootstrap_pconfig")
+	// Initially use addr as unique ID
 	_, err = coll.DeleteOne(ctx, bson.D{
 		{Key: "addr", Value: s.addr},
 	})
@@ -72,17 +75,18 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	sub := s.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_ok")
+	ch := sub.Channel()
+
 	err = s.rC.Publish(ctx, "karaoke/bootstrap_pconfig_n_ok", s.addr).Err()
 	if err != nil {
 		return err
 	}
 
-	sub := s.rC.Subscribe(ctx, "karaoke/bootstrap_pconfig_ok")
-	ch := sub.Channel()
 	select {
 	case ok := <-ch:
 		if ok.Payload != "1" {
-			panic(ErrInvalidBootstrapPConfigOKSignal)
+			panic(ErrBootstrapInvalidPConfigOKSignal)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
@@ -108,7 +112,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	for _, c := range cs {
 		addr := c["addr"].(string)
 		id := c["id"].(string)
-		layer := c["layer"].(int)
+		layer := int(c["layer"].(int32))
 		if addr == s.addr {
 			s.id = id
 		}
@@ -131,7 +135,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		for _, id := range s.layerIdx[0] {
 			i := id
 			g.Go(func() error {
-				conn, err := grpc.Dial(s.pCs[i].Addr)
+				conn, err := grpc.Dial(s.pCs[i].Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 				if err != nil {
 					return err
 				}
@@ -148,7 +152,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		for _, id := range s.layerIdx[s.c.Layer+1] {
 			i := id
 			g.Go(func() error {
-				conn, err := grpc.Dial(s.pCs[i].Addr)
+				conn, err := grpc.Dial(s.pCs[i].Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 				if err != nil {
 					return err
 				}
@@ -168,7 +172,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.zeroLayerClients = zLCs
 	s.postLayerClients = pLCs
 
-	// TODO: Not dummy clients
+	// TODO: Replace dummy clients
 	for i := 0; i < 10; i++ {
 		s.clients = append(s.clients, *NewClient(ClientConfig{
 			PCs:      s.pCs,
@@ -179,7 +183,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-var ErrInvalidBootstrapPConfigOKSignal = errors.New("invalid bootstrap_pconfig_ok signal: not 1")
+var ErrBootstrapInvalidPConfigOKSignal = errors.New("invalid bootstrap_pconfig_ok signal: not 1")
 
 func (s *Server) Close(ctx context.Context) error {
 	err := s.rC.Close()
@@ -195,14 +199,19 @@ func (s *Server) Close(ctx context.Context) error {
 	return nil
 }
 
-// From Cloudflare API
+// publicIP gets the public IP from Cloudflare API
 func publicIP() (string, error) {
 	res, err := http.Get("https://cloudflare.com/cdn-cgi/trace")
 	if err != nil {
 		return "", err
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		err := res.Body.Close()
+		if err != nil {
+			panic(err)
+		}
+	}()
 	bodyB, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", err

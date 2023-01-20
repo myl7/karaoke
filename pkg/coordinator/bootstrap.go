@@ -61,6 +61,7 @@ L:
 		return err
 	}
 
+	// Set server IDs as continuous 0-started int
 	for i, c := range cs {
 		_, err = coll.UpdateByID(ctx, c["_id"], bson.D{
 			{Key: "$set", Value: bson.D{
