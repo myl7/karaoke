@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"time"
 
 	"github.com/myl7/karaoke/pkg/server"
 )
@@ -22,16 +21,27 @@ func main() {
 		RAddr: opts["raddr"].(string),
 		MURI:  opts["muri"].(string),
 	})
+	go func() {
+		err := s.Listen(ctx)
+		if err != nil {
+			panic(err)
+		}
+	}()
 	err := s.Bootstrap(ctx)
 	if err != nil {
 		panic(err)
 	}
-	defer s.Close(ctx)
+	defer func() {
+		err := s.Close(ctx)
+		if err != nil {
+			panic(err)
+		}
+	}()
 	log.Println("bootstrap OK")
 
-	// TODO: To impl
-	for {
-		time.Sleep(60 * time.Second)
+	err = s.Run(ctx)
+	if err != nil {
+		panic(err)
 	}
 }
 

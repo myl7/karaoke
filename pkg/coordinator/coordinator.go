@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -32,6 +33,23 @@ func NewCoordinator(c CoordinatorConfig) *Coordinator {
 }
 
 func (co *Coordinator) Run(ctx context.Context) error {
+	// To make sure all servers are waiting rounds but still separate Run & Bootstrap,
+	// poll subscriber number until enough.
+	for {
+		nM, err := co.rC.PubSubNumSub(ctx, "karaoke/round").Result()
+		if err != nil {
+			return err
+		}
+		if nM["karaoke/round"] >= int64(co.c.ServerN) {
+			break
+		}
+		select {
+		case <-time.After(1 * time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	for {
 		co.round += 1
 		err := co.rC.Publish(ctx, "karaoke/round", strconv.Itoa(co.round)).Err()

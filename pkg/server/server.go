@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"log"
 	"strconv"
 	"sync"
 
@@ -31,15 +32,15 @@ type Server struct {
 
 	round int
 
-	// Pool of encoded onion bytes received
+	// pool contains encoded onion bytes received
 	pool [][]byte
-	// Indicate which other servers have sent onions here
+	// poolMask indicate which server has sent onions here in the round
 	poolMask map[string]bool
 	poolLock sync.Mutex
-	// Notify [runRound] to process onions in pool
+	// poolFullCh notifys runRound to process onions in pool
 	poolFullCh chan bool
 
-	// TODO: Dead drop new persistent storage
+	// TODO: Dead drop external persistence
 	deadDrop     map[string][]byte
 	deadDropLock sync.Mutex
 
@@ -54,19 +55,19 @@ type Server struct {
 
 type ServerConfig struct {
 	Layer int
-	// Endpoint accessible by other servers.
+	// Addr is the endpoint accessible by other servers.
 	// If empty, use the port of [LAddr] and the public IP by detection.
 	// At that time [LAddr] must be in ":%d" format.
 	Addr string
-	// For gRPC Listening
+	// LAddr is for gRPC Listening
 	LAddr string
-	// Can leave empty to atomically gen
-	// TODO: PK/sk rotation
+	// PK, SK can be left empty to atomically gen
+	// TODO: PK/SK rotation
 	PK, SK *[32]byte
 
-	// Redis addr
+	// RAddr is Redis addr
 	RAddr string
-	// MongoDB URI
+	// MURI is MongoDB URI
 	MURI string
 }
 
@@ -83,10 +84,16 @@ func NewServer(c ServerConfig) *Server {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	sub := s.rC.Subscribe(ctx, "karaoke/round")
+	defer func() {
+		err := sub.Close()
+		if err != nil {
+			panic(err)
+		}
+	}()
+	ch := sub.Channel()
 L:
 	for {
-		sub := s.rC.Subscribe(ctx, "karaoke/round")
-		ch := sub.Channel()
 		select {
 		case roundMsg := <-ch:
 			round, err := strconv.Atoi(roundMsg.Payload)
@@ -95,6 +102,7 @@ L:
 			}
 
 			if round <= s.round {
+				log.Println("invalid round num")
 				continue L
 			}
 
@@ -105,14 +113,12 @@ L:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		err := sub.Close()
-		if err != nil {
-			panic(err)
-		}
 	}
 }
 
 func (s *Server) runRound(ctx context.Context) error {
+	log.Println("start round")
+
 	var cipherBs [][]byte
 	if s.c.Layer > 0 {
 		<-s.poolFullCh
@@ -129,6 +135,8 @@ func (s *Server) runRound(ctx context.Context) error {
 			cipherBs = append(cipherBs, msg)
 		}
 	}
+
+	log.Println("get to-process onions")
 
 	var plainBs [][]byte
 	for _, b := range cipherBs {
@@ -175,6 +183,8 @@ func (s *Server) runRound(ctx context.Context) error {
 	}
 
 	// TODO: Gen noise or check Bloom
+
+	log.Println("get to-send onions")
 
 	oM := make(map[string][][]byte)
 	s.deadDropLock.Lock()
@@ -228,10 +238,16 @@ func (s *Server) runRound(ctx context.Context) error {
 	s.poolLock.Lock()
 	s.poolMask = make(map[string]bool)
 	s.poolLock.Unlock()
+
+	err = s.rC.Publish(ctx, "karaoke/round_ok", s.round).Err()
+	if err != nil {
+		return err
+	}
+	log.Println("end round")
 	return nil
 }
 
-var ErrBloomCheckFailure = errors.New("bloom check failure, which means noise loss and adversary possibility")
+var ErrBloomCheckFailure = errors.New("fail to check Bloom, which means noise loss and adversary possibility")
 
 func (s *Server) FwdOnions(ss RPC_FwdOnionsServer) error {
 	metaMsg, err := ss.Recv()

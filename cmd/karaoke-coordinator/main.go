@@ -5,7 +5,6 @@ import (
 	"flag"
 	"log"
 	"os"
-	"time"
 
 	"github.com/myl7/karaoke/pkg/coordinator"
 )
@@ -23,12 +22,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer co.Close(ctx)
+	defer func() {
+		err := co.Close(ctx)
+		if err != nil {
+			panic(err)
+		}
+	}()
 	log.Println("bootstrap OK")
 
-	// TODO: To impl
-	for {
-		time.Sleep(60 * time.Second)
+	err = co.Run(ctx)
+	if err != nil {
+		panic(err)
 	}
 }
 
