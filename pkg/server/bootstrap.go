@@ -19,10 +19,10 @@ import (
 )
 
 // Public config
-type pConfig struct {
-	addr  string
-	pk    *[32]byte
-	layer int
+type PConfig struct {
+	Addr  string
+	PK    *[32]byte
+	Layer int
 }
 
 func (s *Server) Bootstrap(ctx context.Context) error {
@@ -103,7 +103,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	s.pCs = make(map[string]pConfig, len(cs))
+	s.pCs = make(map[string]PConfig, len(cs))
 	s.layerIdx = make(map[int][]string)
 	for _, c := range cs {
 		addr := c["addr"].(string)
@@ -112,10 +112,10 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		if addr == s.addr {
 			s.id = id
 		}
-		s.pCs[id] = pConfig{
-			addr:  addr,
-			pk:    (*[32]byte)(c["pk"].(primitive.Binary).Data),
-			layer: layer,
+		s.pCs[id] = PConfig{
+			Addr:  addr,
+			PK:    (*[32]byte)(c["pk"].(primitive.Binary).Data),
+			Layer: layer,
 		}
 		s.layerIdx[layer] = append(s.layerIdx[layer], id)
 	}
@@ -131,7 +131,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		for _, id := range s.layerIdx[0] {
 			i := id
 			g.Go(func() error {
-				conn, err := grpc.Dial(s.pCs[i].addr)
+				conn, err := grpc.Dial(s.pCs[i].Addr)
 				if err != nil {
 					return err
 				}
@@ -148,7 +148,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		for _, id := range s.layerIdx[s.c.Layer+1] {
 			i := id
 			g.Go(func() error {
-				conn, err := grpc.Dial(s.pCs[i].addr)
+				conn, err := grpc.Dial(s.pCs[i].Addr)
 				if err != nil {
 					return err
 				}
@@ -167,6 +167,14 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	s.zeroLayerClients = zLCs
 	s.postLayerClients = pLCs
+
+	// TODO: Not dummy clients
+	for i := 0; i < 10; i++ {
+		s.clients = append(s.clients, *NewClient(ClientConfig{
+			PCs:      s.pCs,
+			LayerIdx: s.layerIdx,
+		}))
+	}
 
 	return nil
 }

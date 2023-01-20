@@ -26,7 +26,7 @@ type Server struct {
 	// Set in bootstrap
 	addr     string
 	id       string
-	pCs      map[string]pConfig
+	pCs      map[string]PConfig
 	layerIdx map[int][]string
 
 	round int
@@ -48,6 +48,8 @@ type Server struct {
 
 	postLayerClients map[string]RPCClient
 	zeroLayerClients map[string]RPCClient
+
+	clients []Client
 }
 
 type ServerConfig struct {
@@ -111,14 +113,22 @@ L:
 }
 
 func (s *Server) runRound(ctx context.Context) error {
+	var cipherBs [][]byte
 	if s.c.Layer > 0 {
 		<-s.poolFullCh
+		s.poolLock.Lock()
+		cipherBs = s.pool
+		s.pool = nil
+		s.poolLock.Unlock()
+	} else {
+		for _, c := range s.clients {
+			msg, err := c.RunRound()
+			if err != nil {
+				return err
+			}
+			cipherBs = append(cipherBs, msg)
+		}
 	}
-
-	s.poolLock.Lock()
-	cipherBs := s.pool
-	s.pool = nil
-	s.poolLock.Unlock()
 
 	var plainBs [][]byte
 	for _, b := range cipherBs {
