@@ -18,11 +18,12 @@ func main() {
 	ctx := context.Background()
 
 	s := server.NewServer(server.ServerConfig{
-		Layer: opts["layer"].(int),
-		Addr:  opts["addr"].(string),
-		LAddr: opts["laddr"].(string),
-		RAddr: opts["raddr"].(string),
-		MURI:  opts["muri"].(string),
+		Layer:   opts["layer"].(int),
+		Addr:    opts["addr"].(string),
+		LAddr:   opts["laddr"].(string),
+		RAddr:   opts["raddr"].(string),
+		MURI:    opts["muri"].(string),
+		BloomFP: opts["bloomfp"].(float64),
 	})
 	go func() {
 		err := s.Listen(ctx)
@@ -54,6 +55,7 @@ func parseOpts() map[string]any {
 	laddr := flag.String("laddr", "", "gRPC listen addr")
 	raddr := flag.String("raddr", "", "Redis addr")
 	muri := flag.String("muri", "", "MongoDB URI")
+	bloomFP := flag.Float64("bloomfp", 0.01, "Bloom filter false-positive rate")
 	flag.Parse()
 
 	abort := func() {
@@ -75,6 +77,9 @@ func parseOpts() map[string]any {
 	if *muri == "" {
 		abort()
 	}
+	if *bloomFP <= 0 || *bloomFP >= 1 {
+		abort()
+	}
 
 	opts := make(map[string]any)
 	opts["layer"] = *layer
@@ -82,5 +87,6 @@ func parseOpts() map[string]any {
 	opts["laddr"] = *laddr
 	opts["raddr"] = *raddr
 	opts["muri"] = *muri
+	opts["bloomfp"] = *bloomFP
 	return opts
 }

@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ServerRPCClient interface {
 	FwdOnions(ctx context.Context, opts ...grpc.CallOption) (ServerRPC_FwdOnionsClient, error)
+	CheckBloom(ctx context.Context, in *CheckBloomReq, opts ...grpc.CallOption) (*CheckBloomRes, error)
 }
 
 type serverRPCClient struct {
@@ -67,11 +68,21 @@ func (x *serverRPCFwdOnionsClient) CloseAndRecv() (*FwdOnionsRes, error) {
 	return m, nil
 }
 
+func (c *serverRPCClient) CheckBloom(ctx context.Context, in *CheckBloomReq, opts ...grpc.CallOption) (*CheckBloomRes, error) {
+	out := new(CheckBloomRes)
+	err := c.cc.Invoke(ctx, "/rpc.ServerRPC/CheckBloom", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ServerRPCServer is the server API for ServerRPC service.
 // All implementations must embed UnimplementedServerRPCServer
 // for forward compatibility
 type ServerRPCServer interface {
 	FwdOnions(ServerRPC_FwdOnionsServer) error
+	CheckBloom(context.Context, *CheckBloomReq) (*CheckBloomRes, error)
 	mustEmbedUnimplementedServerRPCServer()
 }
 
@@ -81,6 +92,9 @@ type UnimplementedServerRPCServer struct {
 
 func (UnimplementedServerRPCServer) FwdOnions(ServerRPC_FwdOnionsServer) error {
 	return status.Errorf(codes.Unimplemented, "method FwdOnions not implemented")
+}
+func (UnimplementedServerRPCServer) CheckBloom(context.Context, *CheckBloomReq) (*CheckBloomRes, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckBloom not implemented")
 }
 func (UnimplementedServerRPCServer) mustEmbedUnimplementedServerRPCServer() {}
 
@@ -121,13 +135,36 @@ func (x *serverRPCFwdOnionsServer) Recv() (*OnionMsg, error) {
 	return m, nil
 }
 
+func _ServerRPC_CheckBloom_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckBloomReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServerRPCServer).CheckBloom(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/rpc.ServerRPC/CheckBloom",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServerRPCServer).CheckBloom(ctx, req.(*CheckBloomReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ServerRPC_ServiceDesc is the grpc.ServiceDesc for ServerRPC service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ServerRPC_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "rpc.ServerRPC",
 	HandlerType: (*ServerRPCServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CheckBloom",
+			Handler:    _ServerRPC_CheckBloom_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "FwdOnions",

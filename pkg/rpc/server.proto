@@ -16,6 +16,7 @@ message Onion {
 
 service ServerRPC {
   rpc FwdOnions(stream OnionMsg) returns (FwdOnionsRes);
+  rpc CheckBloom(CheckBloomReq) returns (CheckBloomRes);
 }
 
 message OnionMsg {
@@ -27,7 +28,18 @@ message OnionMsg {
 
 message OnionMsgMeta {
   // Leave empty to indicate the onion is from a client
+  // TODO: Signature
   string id = 1;
 }
 
 message FwdOnionsRes {}
+
+message CheckBloomReq {
+  bytes bloom = 1;
+  // TODO: Signature
+  string id = 2;
+}
+
+message CheckBloomRes {
+  bool ok = 1;
+}

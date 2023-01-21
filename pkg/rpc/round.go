@@ -13,5 +13,6 @@ type RoundStartMsg struct {
 // For mashaling, see [RoundStartMsg].
 type RoundEndMsg struct {
 	Round int
-	ID    string
+	// TODO: Signature
+	ID string
 }

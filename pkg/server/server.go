@@ -10,8 +10,10 @@ import (
 	"errors"
 	"io"
 	"log"
+	mrand "math/rand"
 	"sync"
 
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/go-redis/redis/v9"
 	"github.com/myl7/karaoke/pkg/rpc"
 	"github.com/myl7/karaoke/pkg/utils"
@@ -52,6 +54,9 @@ type Server struct {
 	postLayerClients map[string]rpc.ServerRPCClient
 	zeroLayerClients map[string]rpc.ServerRPCClient
 
+	// noiseCache is emptied every round
+	noiseCache []noiseInfo
+
 	clients []Client
 }
 
@@ -71,6 +76,8 @@ type ServerConfig struct {
 	RAddr string
 	// MURI is MongoDB URI
 	MURI string
+
+	BloomFP float64
 }
 
 func NewServer(c ServerConfig) *Server {
@@ -162,9 +169,10 @@ func (s *Server) runRound(ctx context.Context) error {
 	for _, b := range m {
 		plainBs = append(plainBs, b)
 	}
+	plainBsIdx := make(map[int]int)
 
 	var os []*rpc.Onion
-	for _, b := range plainBs {
+	for i, b := range plainBs {
 		o := new(rpc.Onion)
 		err := proto.Unmarshal(b, o)
 		if err != nil {
@@ -190,14 +198,52 @@ func (s *Server) runRound(ctx context.Context) error {
 		}
 
 		os = append(os, o)
+		plainBsIdx[len(os)-1] = i
 	}
 
-	// Avoid empty Bloom
-	if len(os) == 0 {
-		return nil
-	}
+	if s.c.Layer <= 0 {
+		noise, err := s.genNoise()
+		if err != nil {
+			return err
+		}
+		os = append(os, noise...)
+	} else if len(os) >= 0 { // Avoid empty Bloom
+		oBs := make([][]byte, len(os))
+		for i := range os {
+			oBs[i] = plainBs[plainBsIdx[i]]
+		}
 
-	// TODO: Gen noise or check Bloom
+		bl := bloom.NewWithEstimates(uint(len(oBs)), s.c.BloomFP)
+		for _, b := range oBs {
+			bl.Add(b)
+		}
+		blB, err := json.Marshal(bl)
+		if err != nil {
+			panic(err)
+		}
+
+		g, gCtx := errgroup.WithContext(ctx)
+		for _, c := range s.zeroLayerClients {
+			c := c
+			g.Go(func() error {
+				res, err := c.CheckBloom(gCtx, &rpc.CheckBloomReq{
+					Bloom: blB,
+					Id:    s.id,
+				})
+				if err != nil {
+					return err
+				}
+				if !res.Ok {
+					return ErrBloomCheckFailure
+				}
+				return nil
+			})
+		}
+		err = g.Wait()
+		if err != nil {
+			return err
+		}
+	}
 
 	log.Println("get to-send onions")
 
@@ -211,6 +257,12 @@ func (s *Server) runRound(ctx context.Context) error {
 		}
 	}
 	s.deadDropLock.Unlock()
+
+	for _, os := range oM {
+		mrand.Shuffle(len(os), func(i, j int) {
+			os[i], os[j] = os[j], os[i]
+		})
+	}
 
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, id := range s.layerIdx[s.c.Layer+1] {
@@ -320,4 +372,39 @@ func (s *Server) FwdOnions(ss rpc.ServerRPC_FwdOnionsServer) error {
 		return err
 	}
 	return ss.SendAndClose(&rpc.FwdOnionsRes{})
+}
+
+func (s *Server) CheckBloom(ctx context.Context, req *rpc.CheckBloomReq) (*rpc.CheckBloomRes, error) {
+	fRes := &rpc.CheckBloomRes{Ok: false}
+
+	id := req.Id
+	pC, ok := s.pCs[id]
+	if !ok {
+		return fRes, nil
+	}
+
+	bl := new(bloom.BloomFilter)
+	err := json.Unmarshal(req.Bloom, bl)
+	if err != nil {
+		return fRes, nil
+	}
+
+	for _, info := range s.noiseCache {
+		if !bl.Test(info.routeBs[pC.Layer]) {
+			return fRes, nil
+		}
+	}
+
+	return &rpc.CheckBloomRes{
+		Ok: true,
+	}, nil
+}
+
+func (s *Server) genNoise() ([]*rpc.Onion, error) {
+	return nil, nil // TODO: Implement
+}
+
+type noiseInfo struct {
+	// routeBs is bytes that should be received by every layer
+	routeBs [][]byte
 }
