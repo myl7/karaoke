@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 
+	"github.com/myl7/karaoke/pkg/rpc"
 	"github.com/myl7/karaoke/pkg/utils"
 	"golang.org/x/crypto/nacl/box"
 	"google.golang.org/protobuf/proto"
@@ -16,7 +17,7 @@ type Client struct {
 type ClientConfig struct {
 	PK, SK *[32]byte
 
-	PCs      map[string]PConfig
+	PCs      map[string]rpc.PConfig
 	LayerIdx map[int][]string
 }
 
@@ -36,7 +37,7 @@ func NewClient(c ClientConfig) *Client {
 func (c *Client) RunRound() ([]byte, error) {
 	deadDrop := "0"
 	body := []byte("OK")
-	o := &Onion{
+	o := &rpc.Onion{
 		Body:     body,
 		NextHop:  "",
 		DeadDrop: deadDrop,
@@ -60,7 +61,7 @@ func (c *Client) RunRound() ([]byte, error) {
 			oB = newOB
 			break
 		}
-		o = &Onion{
+		o = &rpc.Onion{
 			Body:     newOB,
 			NextHop:  id,
 			DeadDrop: "",

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v9"
+	"github.com/myl7/karaoke/pkg/rpc"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -53,7 +53,12 @@ func (co *Coordinator) Run(ctx context.Context) error {
 
 	for {
 		co.round += 1
-		err := co.rC.Publish(ctx, "karaoke/round", strconv.Itoa(co.round)).Err()
+		rS := rpc.RoundStartMsg{Round: co.round}
+		rSB, err := json.Marshal(rS)
+		if err != nil {
+			panic(err)
+		}
+		err = co.rC.Publish(ctx, "karaoke/round", rSB).Err()
 		if err != nil {
 			return err
 		}
@@ -64,14 +69,14 @@ func (co *Coordinator) Run(ctx context.Context) error {
 	L:
 		for {
 			select {
-			case roundEndMsgB := <-ch:
-				var rEM map[string]any
-				err = json.Unmarshal([]byte(roundEndMsgB.Payload), &rEM)
+			case rEB := <-ch:
+				var rE rpc.RoundEndMsg
+				err = json.Unmarshal([]byte(rEB.Payload), &rE)
 				if err != nil {
 					panic(err)
 				}
-				round := int(rEM["round"].(float64))
-				id := rEM["id"].(string)
+				round := rE.Round
+				id := rE.ID
 
 				if round != co.round {
 					panic(ErrRoundNotMatch)

@@ -7,10 +7,10 @@ import (
 	"errors"
 	"io"
 	"log"
-	"strconv"
 	"sync"
 
 	"github.com/go-redis/redis/v9"
+	"github.com/myl7/karaoke/pkg/rpc"
 	"github.com/myl7/karaoke/pkg/utils"
 	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/nacl/box"
@@ -18,17 +18,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-//go:generate protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative server.proto
-
 type Server struct {
-	UnimplementedRPCServer
+	rpc.UnimplementedServerRPCServer
 
 	c ServerConfig
 
 	// Set in bootstrap
 	addr     string
 	id       string
-	pCs      map[string]PConfig
+	pCs      map[string]rpc.PConfig
 	layerIdx map[int][]string
 
 	round int
@@ -48,8 +46,8 @@ type Server struct {
 	rC  *redis.Client
 	mDB *mongo.Database
 
-	postLayerClients map[string]RPCClient
-	zeroLayerClients map[string]RPCClient
+	postLayerClients map[string]rpc.ServerRPCClient
+	zeroLayerClients map[string]rpc.ServerRPCClient
 
 	clients []Client
 }
@@ -96,11 +94,13 @@ func (s *Server) Run(ctx context.Context) error {
 L:
 	for {
 		select {
-		case roundMsg := <-ch:
-			round, err := strconv.Atoi(roundMsg.Payload)
+		case rSB := <-ch:
+			var rS rpc.RoundStartMsg
+			err := json.Unmarshal([]byte(rSB.Payload), &rS)
 			if err != nil {
 				panic(err)
 			}
+			round := rS.Round
 
 			if round <= s.round {
 				log.Println("invalid round num")
@@ -160,9 +160,9 @@ func (s *Server) runRound(ctx context.Context) error {
 		plainBs = append(plainBs, b)
 	}
 
-	var os []*Onion
+	var os []*rpc.Onion
 	for _, b := range plainBs {
-		o := new(Onion)
+		o := new(rpc.Onion)
 		err := proto.Unmarshal(b, o)
 		if err != nil {
 			continue
@@ -219,9 +219,9 @@ func (s *Server) runRound(ctx context.Context) error {
 				return err
 			}
 
-			err = cc.Send(&OnionMsg{
-				Msg: &OnionMsg_Meta{
-					Meta: &OnionMsgMeta{
+			err = cc.Send(&rpc.OnionMsg{
+				Msg: &rpc.OnionMsg_Meta{
+					Meta: &rpc.OnionMsgMeta{
 						Id: s.id,
 					},
 				},
@@ -230,8 +230,8 @@ func (s *Server) runRound(ctx context.Context) error {
 				return err
 			}
 			for _, b := range oM[i] {
-				err = cc.Send(&OnionMsg{
-					Msg: &OnionMsg_Body{
+				err = cc.Send(&rpc.OnionMsg{
+					Msg: &rpc.OnionMsg_Body{
 						Body: b,
 					},
 				})
@@ -252,15 +252,15 @@ func (s *Server) runRound(ctx context.Context) error {
 	s.poolMask = make(map[string]bool)
 	s.poolLock.Unlock()
 
-	roundEndMsg := map[string]any{
-		"round": s.round,
-		"id":    s.id,
+	rE := rpc.RoundEndMsg{
+		Round: s.round,
+		ID:    s.id,
 	}
-	rEMB, err := json.Marshal(roundEndMsg)
+	rEB, err := json.Marshal(rE)
 	if err != nil {
 		panic(err)
 	}
-	err = s.rC.Publish(ctx, "karaoke/round_ok", rEMB).Err()
+	err = s.rC.Publish(ctx, "karaoke/round_ok", rEB).Err()
 	if err != nil {
 		return err
 	}
@@ -270,12 +270,12 @@ func (s *Server) runRound(ctx context.Context) error {
 
 var ErrBloomCheckFailure = errors.New("fail to check Bloom, which means noise loss and adversary possibility")
 
-func (s *Server) FwdOnions(ss RPC_FwdOnionsServer) error {
+func (s *Server) FwdOnions(ss rpc.ServerRPC_FwdOnionsServer) error {
 	metaMsg, err := ss.Recv()
 	if err != nil {
 		return err
 	}
-	meta := metaMsg.Msg.(*OnionMsg_Meta).Meta
+	meta := metaMsg.Msg.(*rpc.OnionMsg_Meta).Meta
 
 	ok, err := func() (bool, error) {
 		s.poolLock.Lock()
@@ -296,7 +296,7 @@ func (s *Server) FwdOnions(ss RPC_FwdOnionsServer) error {
 					return false, err
 				}
 			}
-			bs = append(bs, msg.Msg.(*OnionMsg_Body).Body)
+			bs = append(bs, msg.Msg.(*rpc.OnionMsg_Body).Body)
 		}
 
 		ok := true
@@ -316,5 +316,5 @@ func (s *Server) FwdOnions(ss RPC_FwdOnionsServer) error {
 	if err != nil {
 		return err
 	}
-	return ss.SendAndClose(&FwdOnionsRes{})
+	return ss.SendAndClose(&rpc.FwdOnionsRes{})
 }

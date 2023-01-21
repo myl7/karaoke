@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/go-redis/redis/v9"
+	"github.com/myl7/karaoke/pkg/rpc"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -18,13 +19,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
-// PConfig is server publicly available config
-type PConfig struct {
-	Addr  string
-	PK    *[32]byte
-	Layer int
-}
 
 func (s *Server) Bootstrap(ctx context.Context) error {
 	s.rC = redis.NewClient(&redis.Options{
@@ -107,7 +101,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	s.pCs = make(map[string]PConfig, len(cs))
+	s.pCs = make(map[string]rpc.PConfig, len(cs))
 	s.layerIdx = make(map[int][]string)
 	for _, c := range cs {
 		addr := c["addr"].(string)
@@ -116,7 +110,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		if addr == s.addr {
 			s.id = id
 		}
-		s.pCs[id] = PConfig{
+		s.pCs[id] = rpc.PConfig{
 			Addr:  addr,
 			PK:    (*[32]byte)(c["pk"].(primitive.Binary).Data),
 			Layer: layer,
@@ -124,8 +118,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		s.layerIdx[layer] = append(s.layerIdx[layer], id)
 	}
 
-	zLCs := make(map[string]RPCClient)
-	pLCs := make(map[string]RPCClient)
+	zLCs := make(map[string]rpc.ServerRPCClient)
+	pLCs := make(map[string]rpc.ServerRPCClient)
 	var lock sync.Mutex
 	g, _ := errgroup.WithContext(ctx)
 	if s.c.Layer > 0 {
@@ -139,7 +133,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				client := NewRPCClient(conn)
+				client := rpc.NewServerRPCClient(conn)
 
 				lock.Lock()
 				defer lock.Unlock()
@@ -156,7 +150,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				client := NewRPCClient(conn)
+				client := rpc.NewServerRPCClient(conn)
 
 				lock.Lock()
 				defer lock.Unlock()
@@ -236,6 +230,6 @@ func (s *Server) Listen(ctx context.Context) error {
 		return err
 	}
 	gs := grpc.NewServer()
-	RegisterRPCServer(gs, s)
+	rpc.RegisterServerRPCServer(gs, s)
 	return gs.Serve(l)
 }
