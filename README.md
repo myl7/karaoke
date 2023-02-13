@@ -1,3 +1,5 @@
+**Note: We are going to refactor the project, so currently do NOT use it**
+
 # Karaoke
 
 [Karaoke: Distributed Private Messaging Immune to Passive Traffic Analysis](https://www.usenix.org/conference/osdi18/presentation/lazar) (OSDI '18) implementation focused on composability
